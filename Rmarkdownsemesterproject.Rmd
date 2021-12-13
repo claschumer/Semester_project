@@ -1,0 +1,758 @@
+---
+title: "Semester_project"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading:
+
+
+```{r}
+library(readr)
+library(survival)
+library(timereg)
+library(survminer)
+library(cmprsk)
+library(dplyr)
+
+#Preparation of the data: 
+setwd("~/Desktop/Projet de semestre /SPRINT/SPRINT_2020a/SPRINT/data/CSV")
+alldeath <- read_csv("alldeath.csv")
+bp_med_log_v2 <- read_csv("bp_med_log_v2.csv")
+censored_prior <- read_csv("censored_prior.csv")
+intbp_manage_1m <- read_csv("intbp_manage_1m.csv")
+stbp_manage_anfu <- read_csv("stbp_manage_anfu.csv")
+safety_events_v2 <- read_csv("safety_events_v2.csv")
+
+```
+
+## Processing of the data: Intensive data frame 
+
+```{r }
+SAE_longer <- safety_events_v2[!duplicated(safety_events_v2$MASKID),]
+SAE_longer <- data.frame(SAE_longer$MASKID,SAE_longer$EVENTDAYS,SAE_longer$EVENTDAYS_POSTI)
+id_intensive <- intbp_manage_1m$MASKID
+data_intensive_longer <- data.frame(rep(intbp_manage_1m$MASKID,each=24))
+data_intensive_longer$Z <- rep(1,length(data_intensive_longer$rep.intbp_manage_1m.MASKID..each...24.))
+data_intensive_longer$days <- c(30,60,90,180,270,360,450,540,630,720,810,900,990,1080,1170,1260,1350,1440,1530,1620,1710,1800,1890,1980)
+wert_longer <- data.frame(id_intensive)
+wert_longer$SAE <- rep(0,length(wert_longer$id_intensive))
+wert_longer$time <- rep(0,length(wert_longer$id_intensive))
+SAE_intensive_longer <- filter(SAE_longer,SAE_longer$SAE_longer.MASKID %in% id_intensive)
+wertSAE_longer <- filter(wert_longer,wert_longer$id_intensive%in% SAE_intensive_longer$SAE_longer.MASKID)
+wertSAE_longer$SAE<- 1
+wertSAE_longer$time <- SAE_intensive_longer$SAE_longer.EVENTDAYS
+dar_longer <- rbind(wertSAE_longer,wert_longer)
+p_longer <- rep(0,length(wert_longer$id_intensive))
+for(k in 1:length(dar_longer$id_intensive)){
+  if(length(which(dar_longer$id_intensive == id_intensive[k]))==2){p_longer[k] <- max(which(dar_longer$id_intensive == id_intensive[k]))}
+}
+p_longer <- p_longer[p_longer!=0]
+dar_longer <- dar_longer[-p_longer,]
+dar_longer <- dar_longer %>% slice(rep(1:n(),each=24))
+data_intensive_longer$SAE <- rep(0,length(data_intensive_longer$Z))
+data_intensive_longer$SAE[which(dar_longer$time < data_intensive_longer$days)] <- 1 
+data_intensive_longer$newSAE <- rep(1,length(data_intensive_longer$Z))
+for (j in 1:108383) {
+  if(data_intensive_longer$SAE[j] == 1 & data_intensive_longer$rep.intbp_manage_1m.MASKID..each...24.[j] == data_intensive_longer$rep.intbp_manage_1m.MASKID..each...24.[j+1] ) {data_intensive_longer$newSAE[j+1] = 0}
+}
+for (k in 1:108383) {
+  if(data_intensive_longer$SAE[k] != data_intensive_longer$newSAE[k]) {data_intensive_longer$newSAE[k] = 0}
+}
+data_intensive_longer <- subset(data_intensive_longer,select=-c(SAE))
+data_intensive_longer$SAElag <- rep(0,length(data_intensive_longer$Z))
+for(k in 1:108383){
+  data_intensive_longer$SAElag[k+1] = data_intensive_longer$newSAE[k]
+}
+death_intensive_longer <- filter(alldeath,alldeath$MASKID %in% id_intensive)
+death_intensive2 <- data.frame(death_intensive_longer$MASKID,death_intensive_longer$EVENT,death_intensive_longer$EVENTDAYS)
+data_intensive_longer$Y <- rep(0,length(data_intensive_longer$Z))
+death_intensive_longer <- death_intensive2 %>% slice(rep(1:n(),each=24))
+
+for(j in 1:108383) {
+  if(death_intensive_longer$death_intensive_longer.EVENT[j] == 1 & death_intensive_longer$death_intensive_longer.EVENTDAYS[j] < data_intensive_longer$days[j]) { data_intensive_longer$Y[j] = 1}
+}
+
+pourcentage_med_data_longer <- data.frame(bp_med_log_v2$MASKID,bp_med_log_v2$VISITCODE,bp_med_log_v2$PCTMEDS)
+pourcentage_med_data_longer <- pourcentage_med_data_longer[-which(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE == "RZ2"),]
+pourcentage_med_data_longer<- pourcentage_med_data_longer[-which(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE == "CLO"),]
+pourcentage_med_data_longer <- pourcentage_med_data_longer[-which(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE == "PRN"),]
+
+pourcentage_med_data_longer <- filter(pourcentage_med_data_longer,pourcentage_med_data_longer$bp_med_log_v2.MASKID %in% id_intensive)
+
+pourcentage_med_data_longer$A <- rep(1,length(pourcentage_med_data_longer$bp_med_log_v2.MASKID))
+pourcentage_med_data_longer[is.na(pourcentage_med_data_longer)] <- 0
+for ( j in 1:length(pourcentage_med_data_longer$bp_med_log_v2.MASKID)) { 
+  if(pourcentage_med_data_longer$bp_med_log_v2.PCTMEDS[j] < 8){pourcentage_med_data_longer$A[j] = 0}
+}
+data_intensive_longer$A <- rep(0,length(data_intensive_longer$days))
+y_longer <- rep(1,length(data_intensive_longer$Z))
+data_intensive_longer$MONTH <- rep(c("1M","2M","3M","6M","9M","12M","15M","18M","21M","24M","27M","30M","33M","36M","39M","42M","45M","48M","51M","54M","57M","60M","63M","66M"),times=4516)
+j <- 1 
+
+for ( i in 1:(length(pourcentage_med_data_longer$bp_med_log_v2.PCTMEDS)-1)){
+  y_longer[j] <- pourcentage_med_data_longer$A[i]
+  if(strtoi(substr(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i],1,nchar(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i])-1)) < strtoi(substr(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i+1],1,nchar(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i+1])-1))){ j = j+1}
+  if(strtoi(substr(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i],1,nchar(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i])-1)) > strtoi(substr(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i+1],1,nchar(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i+1])-1)) & pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "54M"){j = j+5}
+  if(strtoi(substr(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i],1,nchar(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i])-1)) > strtoi(substr(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i+1],1,nchar(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i+1])-1)) & pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] != "54M"){
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "51M"){j = j+6}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "48M"){j = j+7}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "45M"){j = j+7}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "42M"){j = j+8}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "39M"){j = j+9}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "36M"){j = j+10}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "33M"){j = j+11}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "30M"){j = j+12}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "27M"){j = j+13}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "24M"){j = j+14}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "21M"){j = j+15}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "18M"){j = j+16}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "15M"){j = j+17}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "12M"){j = j+18}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "9M"){j = j+19}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "6M"){j = j+20}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "3M"){j = j+21}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "2M"){j = j+22}
+    if(pourcentage_med_data_longer$bp_med_log_v2.VISITCODE[i] == "1M"){j = j+23}
+  }
+}
+data_intensive_longer$A <- y_longer
+
+data_intensive_longer$Alag <- rep(0,length(data_intensive_longer$Z))
+for ( i in 1:length(data_intensive_longer$Z)){
+  if (data_intensive_longer$days[i] == 30){data_intensive_longer$Alag[i] = 1}
+  if (data_intensive_longer$days[i] == 60){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 90){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 180){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 270){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 360){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 450){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 540){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 630){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 720){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 810){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 900){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 990){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1080){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1170){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1260){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1350){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1440){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1530){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1620){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1710){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1800){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1890){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+  if (data_intensive_longer$days[i] == 1980){data_intensive_longer$Alag[i] = data_intensive_longer$A[i-1]}
+}
+
+#Censoring:
+data_intensive_censored_1_longer <- filter(censored_prior,censored_prior$MASKID %in% id_intensive)
+maskid_intensive_censored_longer <- rep(data_intensive_censored_1_longer$MASKID,each=24)
+time_intensive_censored_longer <- rep(data_intensive_censored_1_longer$CENSORDAYS_PRIOR,each=24)
+data_intensive_censored_longer <- data.frame(maskid_intensive_censored_longer,time_intensive_censored_longer)
+data_intensive_longer$censor <- rep(0,length(data_intensive_longer$rep.intbp_manage_1m.MASKID..each...24.))
+for(j in 1:length(data_intensive_longer$Z)){
+  if(data_intensive_longer$rep.intbp_manage_1m.MASKID..each...24.[j]== data_intensive_censored_longer$maskid_intensive_censored_longer[j]){
+    if ( data_intensive_censored_longer$time_intensive_censored_longer[j] < data_intensive_longer$days[j]){
+      if(data_intensive_longer$days[j] == 30) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22,j+23)] = 1}
+      if(data_intensive_longer$days[j] == 60) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22)] = 1}
+      if(data_intensive_longer$days[j] == 90) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21)] = 1}
+      if(data_intensive_longer$days[j] == 180) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20)] = 1}
+      if(data_intensive_longer$days[j] == 270) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19)]=1}
+      if(data_intensive_longer$days[j] == 360) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18)] = 1}
+      if(data_intensive_longer$days[j] == 450) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17)] = 1}
+      if(data_intensive_longer$days[j] == 540) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16)]=1}
+      if(data_intensive_longer$days[j] == 630) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15)] = 1}
+      if(data_intensive_longer$days[j] == 720) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14)] = 1}
+      if(data_intensive_longer$days[j] == 810) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13)] = 1}
+      if(data_intensive_longer$days[j] == 900) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12)] = 1}
+      if(data_intensive_longer$days[j] == 990) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11)] = 1}
+      if(data_intensive_longer$days[j] == 1080) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10)] = 1}
+      if(data_intensive_longer$days[j] == 1170) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9)] = 1}
+      if(data_intensive_longer$days[j] == 1260) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8)] = 1}
+      if(data_intensive_longer$days[j] == 1350) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7)] = 1}
+      if(data_intensive_longer$days[j] == 1440) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6)] = 1}
+      if(data_intensive_longer$days[j] == 1530) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4,j+5)] = 1}
+      if(data_intensive_longer$days[j] == 1620) {data_intensive_longer$censor[c(j+1,j+2,j+3,j+4)] = 1}
+      if(data_intensive_longer$days[j] == 1710) {data_intensive_longer$censor[c(j+1,j+2,j+3)] = 1}
+      if(data_intensive_longer$days[j] == 1800) {data_intensive_longer$censor[c(j+1,j+2)] = 1}
+      if(data_intensive_longer$days[j] == 1890) {data_intensive_longer$censor[c(j+1)] = 1}
+    }
+  }
+}
+
+data_intensive_longer$censorlag <- rep(0,length(data_intensive_longer$rep.intbp_manage_1m.MASKID..each...24.))
+for ( i in 1:length(data_intensive_longer$Z)){
+  if (data_intensive_longer$days[i] == 30){data_intensive_longer$censorlag[i] = 0}
+  if (data_intensive_longer$days[i] == 60){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 90){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 180){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 270){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 360){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 450){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 540){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 630){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 720){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 810){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 900){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 990){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1080){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1170){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1260){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1350){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1440){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1530){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1620){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1710){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1800){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1890){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+  if (data_intensive_longer$days[i] == 1980){data_intensive_longer$censorlag[i] = data_intensive_longer$censor[i-1]}
+} 
+
+#Define Y=1
+for (j in 1:length(data_intensive_longer$Z)){
+  if(data_intensive_longer$Y[j] == 1){
+    if(data_intensive_longer$days[j] == 30) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22,j+23),]}
+    if(data_intensive_longer$days[j] == 60) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22),]}
+    if(data_intensive_longer$days[j] == 90) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21),]}
+    if(data_intensive_longer$days[j] == 180) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20),]}
+    if(data_intensive_longer$days[j] == 270) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19),]}
+    if(data_intensive_longer$days[j] == 360) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18),]}
+    if(data_intensive_longer$days[j] == 450) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17),]}
+    if(data_intensive_longer$days[j] == 540) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16),]}
+    if(data_intensive_longer$days[j] == 630) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15),]}
+    if(data_intensive_longer$days[j] == 720) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14),]}
+    if(data_intensive_longer$days[j] == 810) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13),]}
+    if(data_intensive_longer$days[j] == 900) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12),]}
+    if(data_intensive_longer$days[j] == 990) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11),]}
+    if(data_intensive_longer$days[j] == 1080) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10),]}
+    if(data_intensive_longer$days[j] == 1170) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9),]}
+    if(data_intensive_longer$days[j] == 1260) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8),]}
+    if(data_intensive_longer$days[j] == 1350) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7),]}
+    if(data_intensive_longer$days[j] == 1440) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6),]}
+    if(data_intensive_longer$days[j] == 1530) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4,j+5),]}
+    if(data_intensive_longer$days[j] == 1620) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3,j+4),]}
+    if(data_intensive_longer$days[j] == 1710) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2,j+3),]}
+    if(data_intensive_longer$days[j] == 1800) {data_intensive_longer = data_intensive_longer[-c(j+1,j+2),]}
+    if(data_intensive_longer$days[j] == 1890) {data_intensive_longer = data_intensive_longer[-c(j+1),]}
+  }
+}
+```
+## Processing of the data: Standard data frame 
+
+```{r}
+SAE_longer <- safety_events_v2[!duplicated(safety_events_v2$MASKID),]
+SAE_longer <- data.frame(SAE_longer$MASKID,SAE_longer$EVENTDAYS,SAE_longer$EVENTDAYS_POSTI)
+
+id_standard <- stbp_manage_anfu$MASKID[which(stbp_manage_anfu$VISITCODE == "1M")]
+data_standard_longer <- data.frame(rep(id_standard,each=24))
+data_standard_longer$Z <- rep(0,length(data_standard_longer$rep.id_standard..each...24.))
+data_standard_longer$days <- c(30,60,90,180,270,360,450,540,630,720,810,900,990,1080,1170,1260,1350,1440,1530,1620,1710,1800,1890,1980)
+wert2_longer <- data.frame(id_standard)
+wert2_longer$SAE <- rep(0,length(wert2_longer$id_standard))
+wert2_longer$time <- rep(0,length(wert2_longer$id_standard))
+SAE_standard_longer <- filter(SAE_longer,SAE_longer$SAE_longer.MASKID %in% id_standard)
+wert2SAE_longer <- filter(wert2_longer,wert2_longer$id_standard %in% SAE_standard_longer$SAE_longer.MASKID)
+wert2SAE_longer$SAE <- 1
+wert2SAE_longer$time <- SAE_standard_longer$SAE_longer.EVENTDAYS
+dar2_longer <- rbind(wert2SAE_longer,wert2_longer)
+p2_longer <- rep(0,length(wert2_longer$id_standard))
+for(k in 1:length(dar2_longer$id_standard)){
+  if(length(which(dar2_longer$id_standard == id_standard[k]))==2){p2_longer[k] <- max(which(dar2_longer$id_standard == id_standard[k]))}
+}
+p2_longer <- p2_longer[p2_longer!=0]
+dar2_longer <- dar2_longer[-p2_longer,]
+dar2_longer <- dar2_longer %>% slice(rep(1:n(),each=24))
+data_standard_longer$SAE <- rep(0,length(data_standard_longer$Z))
+data_standard_longer$SAE[which(dar2_longer$time < data_standard_longer$days)] <- 1
+data_standard_longer$newSAE <- rep(1,length(data_standard_longer$Z))
+for (j in 1:108023){
+  if(data_standard_longer$SAE[j] == 1 & data_standard_longer$rep.id_standard..each...24.[j] == data_standard_longer$rep.id_standard..each...24.[j+1] ){data_standard_longer$newSAE[j+1]= 0}
+}
+for (k in 1:108023) {
+  if(data_standard_longer$SAE[k] != data_standard_longer$newSAE[k]) {data_standard_longer$newSAE[k] = 0}
+}
+data_standard_longer <- subset(data_standard_longer,select=-c(SAE))
+data_standard_longer$SAElag <- rep(0,length(data_standard_longer$Z))
+
+for(k in 1:108023){
+  data_standard_longer$SAElag[k+1] = data_standard_longer$newSAE[k]
+}
+death_standard_longer <- filter(alldeath,alldeath$MASKID %in% id_standard)
+death_standard2_longer <- data.frame(death_standard_longer$MASKID,death_standard_longer$EVENT,death_standard_longer$EVENTDAYS)
+data_standard_longer$Y <- rep(0,length(data_standard_longer$Z))
+death_standard2_longer <- death_standard2_longer %>% slice(rep(1:n(),each=24))
+for(j in 1:108023){
+  if(death_standard2_longer$death_standard_longer.EVENT[j] == 1 & death_standard2_longer$death_standard_longer.EVENTDAYS[j] < data_standard_longer$days[j]) { data_standard_longer$Y[j]=1}
+}
+
+pourcentage_med_data2_longer <- data.frame(bp_med_log_v2$MASKID,bp_med_log_v2$VISITCODE,bp_med_log_v2$PCTMEDS)
+pourcentage_med_data2_longer <- pourcentage_med_data2_longer[-which(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE == "RZ2"),]
+pourcentage_med_data2_longer <- pourcentage_med_data2_longer[-which(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE == "CLO"),]
+pourcentage_med_data2_longer <- pourcentage_med_data2_longer[-which(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE == "PRN"),]
+
+pourcentage_med_data2_longer <- filter(pourcentage_med_data2_longer,pourcentage_med_data2_longer$bp_med_log_v2.MASKID %in% id_standard) 
+
+pourcentage_med_data2_longer$A <- rep(1,length(pourcentage_med_data2_longer$bp_med_log_v2.MASKID))
+pourcentage_med_data2_longer[is.na(pourcentage_med_data2_longer)] <- 0
+
+for(j in 1:length(pourcentage_med_data2_longer$bp_med_log_v2.MASKID)){
+  if(pourcentage_med_data2_longer$bp_med_log_v2.PCTMEDS[j] < 9){pourcentage_med_data2_longer$A[j] = 0}
+}
+
+data_standard_longer$A <- rep(0,length(data_standard_longer$days))
+y2_longer <- rep(1,length(data_standard_longer$Z))
+data_standard_longer$MONTH <- rep(c("1M","2M","3M","6M","9M","12M","15M","18M","21M","24M","27M","30M","33M","36M","39M","42M","45M","48M","51M","54M","57M","60M","63M","66M"),times=4501)
+j <- 1 
+
+for ( i in 1:(length(pourcentage_med_data2_longer$bp_med_log_v2.PCTMEDS)-1)){
+  y2_longer[j] <- pourcentage_med_data2_longer$A[i]
+  if(strtoi(substr(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i],1,nchar(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i])-1)) < strtoi(substr(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i+1],1,nchar(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i+1])-1))){ j = j+1}
+  if(strtoi(substr(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i],1,nchar(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i])-1)) > strtoi(substr(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i+1],1,nchar(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i+1])-1)) & pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "54M"){j = j+5}
+  if(strtoi(substr(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i],1,nchar(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i])-1)) > strtoi(substr(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i+1],1,nchar(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i+1])-1)) & pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] != "54M"){
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "51M"){j = j+6}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "48M"){j = j+7}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "45M"){j = j+7}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "42M"){j = j+8}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "39M"){j = j+9}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "36M"){j = j+10}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "33M"){j = j+11}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "30M"){j = j+12}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "27M"){j = j+13}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "24M"){j = j+14}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "21M"){j = j+15}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "18M"){j = j+16}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "15M"){j = j+17}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "12M"){j = j+18}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "9M"){j = j+19}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "6M"){j = j+20}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "3M"){j = j+21}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "2M"){j = j+22}
+    if(pourcentage_med_data2_longer$bp_med_log_v2.VISITCODE[i] == "1M"){j = j+23}
+  }
+}
+data_standard_longer$A <- y2_longer
+for (h in 1:108000){
+  if(data_standard_longer$MONTH[h] == "54M" & data_standard_longer$A[h] == 1){data_standard_longer$A[c(h+1,h+2,h+3,h+4)]=1}
+}
+      
+for ( i in 1:length(data_standard_longer$Z)){
+  if (data_standard_longer$days[i] == 30){data_standard_longer$Alag[i] = 1}
+  if (data_standard_longer$days[i] == 60){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 90){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 180){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 270){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 360){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 450){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 540){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 630){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 720){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 810){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 900){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 990){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1080){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1170){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1260){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1350){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1440){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1530){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1620){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1710){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1800){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1890){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+  if (data_standard_longer$days[i] == 1980){data_standard_longer$Alag[i] = data_standard_longer$A[i-1]}
+}  
+
+#Censoring:
+data_standard_censored_1_longer <- filter(censored_prior,censored_prior$MASKID %in% id_standard)
+maskid_standard_censored_longer <- rep(data_standard_censored_1_longer$MASKID,each=24)
+time_standard_censored_longer <- rep(data_standard_censored_1_longer$CENSORDAYS_PRIOR,each=24)
+data_standard_censored_longer <- data.frame(maskid_standard_censored_longer,time_standard_censored_longer)
+data_standard_longer$censor <- rep(0,length(data_standard_longer$Z))
+for(j in 1:length(data_standard_longer$Z)){
+  if(data_standard_longer$rep.id_standard..each...24.[j] == data_standard_censored_longer$maskid_standard_censored_longer[j]){
+    if ( data_standard_censored_longer$time_standard_censored_longer[j] < data_standard_longer$days[j]){
+      if(data_standard_longer$days[j] == 30) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22,j+23)] = 1}
+      if(data_standard_longer$days[j] == 60) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22)] = 1}
+      if(data_standard_longer$days[j] == 90) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21)] = 1}
+      if(data_standard_longer$days[j] == 180) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20)] = 1}
+      if(data_standard_longer$days[j] == 270) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19)]=1}
+      if(data_standard_longer$days[j] == 360) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18)] = 1}
+      if(data_standard_longer$days[j] == 450) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17)] = 1}
+      if(data_standard_longer$days[j] == 540) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16)]=1}
+      if(data_standard_longer$days[j] == 630) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15)] = 1}
+      if(data_standard_longer$days[j] == 720) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14)] = 1}
+      if(data_standard_longer$days[j] == 810) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13)] = 1}
+      if(data_standard_longer$days[j] == 900) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12)] = 1}
+      if(data_standard_longer$days[j] == 990) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11)] = 1}
+      if(data_standard_longer$days[j] == 1080) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10)] = 1}
+      if(data_standard_longer$days[j] == 1170) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9)] = 1}
+      if(data_standard_longer$days[j] == 1260) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8)] = 1}
+      if(data_standard_longer$days[j] == 1350) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6,j+7)] = 1}
+      if(data_standard_longer$days[j] == 1440) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5,j+6)] = 1}
+      if(data_standard_longer$days[j] == 1530) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4,j+5)] = 1}
+      if(data_standard_longer$days[j] == 1620) {data_standard_longer$censor[c(j+1,j+2,j+3,j+4)] = 1}
+      if(data_standard_longer$days[j] == 1710) {data_standard_longer$censor[c(j+1,j+2,j+3)] = 1}
+      if(data_standard_longer$days[j] == 1800) {data_standard_longer$censor[c(j+1,j+2)] = 1}
+      if(data_standard_longer$days[j] == 1890) {data_standard_longer$censor[c(j+1)] = 1}
+    }
+  }
+}
+data_standard_longer$censorlag <- rep(0,length(data_standard_longer$Z))
+for ( i in 1:length(data_standard_longer$Z)){
+  if (data_standard_longer$days[i] == 30){data_standard_longer$censorlag[i] = 0}
+  if (data_standard_longer$days[i] == 60){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 90){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 180){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 270){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 360){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 450){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 540){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 630){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 720){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 810){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 900){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 990){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1080){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1170){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1260){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1350){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1440){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1530){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1620){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1710){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1800){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1890){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+  if (data_standard_longer$days[i] == 1980){data_standard_longer$censorlag[i] = data_standard_longer$censor[i-1]}
+}  
+
+# Define Y==0
+for (j in 1:length(data_standard_longer$Z)){
+  if(data_standard_longer$Y[j] == 1){
+    if(data_standard_longer$days[j] == 30) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22,j+23),]}
+    if(data_standard_longer$days[j] == 60) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21,j+22),]}
+    if(data_standard_longer$days[j] == 90) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20,j+21),]}
+    if(data_standard_longer$days[j] == 180) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19,j+20),]}
+    if(data_standard_longer$days[j] == 270) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18,j+19),]}
+    if(data_standard_longer$days[j] == 360) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17,j+18),]}
+    if(data_standard_longer$days[j] == 450) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16,j+17),]}
+    if(data_standard_longer$days[j] == 540) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15,j+16),]}
+    if(data_standard_longer$days[j] == 630) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14,j+15),]}
+    if(data_standard_longer$days[j] == 720) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13,j+14),]}
+    if(data_standard_longer$days[j] == 810) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12,j+13),]}
+    if(data_standard_longer$days[j] == 900) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11,j+12),]}
+    if(data_standard_longer$days[j] == 990) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10,j+11),]}
+    if(data_standard_longer$days[j] == 1080) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9,j+10),]}
+    if(data_standard_longer$days[j] == 1170) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8,j+9),]}
+    if(data_standard_longer$days[j] == 1260) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7,j+8),]}
+    if(data_standard_longer$days[j] == 1350) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6,j+7),]}
+    if(data_standard_longer$days[j] == 1440) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5,j+6),]}
+    if(data_standard_longer$days[j] == 1530) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4,j+5),]}
+    if(data_standard_longer$days[j] == 1620) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3,j+4),]}
+    if(data_standard_longer$days[j] == 1710) {data_standard_longer = data_standard_longer[-c(j+1,j+2,j+3),]}
+    if(data_standard_longer$days[j] == 1800) {data_standard_longer = data_standard_longer[-c(j+1,j+2),]}
+    if(data_standard_longer$days[j] == 1890) {data_standard_longer = data_standard_longer[-c(j+1),]}
+  }
+}
+```
+
+## Combination of the two data frames: Intensive data frame and Standard data frame 
+```{r}
+names(data_intensive_longer)[names(data_intensive_longer) == "rep.intbp_manage_1m.MASKID..each...24."] <- "Maskid"
+names(data_standard_longer)[names(data_standard_longer) == "rep.id_standard..each...24."] <- "Maskid"
+
+simdat_ana_longer <- rbind(data_intensive_longer,data_standard_longer)
+```
+
+## Consider only individuals such that we have Alag =1 and censorlag = 0
+```{r}
+simdatAC1_longer <- simdat_ana_longer[simdat_ana_longer$Z == 1 & simdat_ana_longer$Alag == 1 & simdat_ana_longer$censorlag == 0,]
+simdatAC0_longer<- simdat_ana_longer[simdat_ana_longer$Z == 0 & simdat_ana_longer$Alag == 1 & simdat_ana_longer$censorlag == 0,]
+```
+
+## Non adherence plot: 
+```{r}
+nonadhere1_longer <- dim(simdatAC1_longer[simdatAC1_longer$A==0,])[1]
+nonadhere0_longer <- dim(simdatAC0_longer[simdatAC0_longer$A==0,])[1]
+```
+
+
+```{r}
+pnonadhere1_longer <- rep(NA,24)
+pnonadhere0_longer <- rep(NA,24)
+
+for (j in 1:3){
+  pnonadhere1_longer[j] <- (dim(simdatAC1_longer[simdatAC1_longer$A == 0 & simdatAC1_longer$days < 30*j ,])[1])/4516
+  pnonadhere0_longer[j] <- (dim(simdatAC0_longer[simdatAC0_longer$A == 0 & simdatAC0_longer$days < 30*j ,])[1])/4501
+}
+for (j in 1:21) {
+  pnonadhere1_longer[j+3] <- (dim(simdatAC1_longer[simdatAC1_longer$A == 0 & simdatAC1_longer$days < 90*(j+1) ,])[1])/4516
+  pnonadhere0_longer[j+3] <- (dim(simdatAC0_longer[simdatAC0_longer$A == 0 & simdatAC0_longer$days < 90*(j+1),])[1])/4501
+}
+
+time <- c(30,60,90,180,270,360,450,540,630,720,810,900,990,1080,1170,1260,1350,1440,1530,1620,1710,1800,1890,1980)
+
+adheredata_longer <- data.frame(time, pnonadhere1_longer,pnonadhere0_longer)
+
+ggplot(adheredata_longer,aes(time)) + geom_line(aes(y=pnonadhere1_longer,colour= "Intensive treatment")) + geom_line(aes(y=pnonadhere0_longer,colour="Standard treatment")) + ylim(c(0,1)) + labs(y="Probability of non adherence", x="Time (days)")
+```
+
+## For intensive arm ( Z=1), we compute the adherence and censor plot. We can then take the product of the IPW censor and IPW adherence to compute the final IPW. 
+```{r}
+#Adherence:
+
+numprobA1_adherence <- glm(A ~ simdatAC1_longer$days, data= simdatAC1_longer, family = binomial(link = "logit"))
+denomprobA1_adherence <- glm(A~ simdatAC1_longer$days + simdatAC1_longer$SAE, data=simdatAC1_longer,family= binomial(link="logit"))
+
+#Censoring: 
+numprobA1_censor <- glm(simdatAC1_longer$censor ~ simdatAC1_longer$days, data = simdatAC1_longer, family =  binomial(link="logit"))
+denomprobA1_censor <- glm( simdatAC1_longer$censor ~ simdatAC1_longer$days + simdatAC1_longer$SAE, data = simdatAC1_longer, family=binomial(link="logit"))
+
+#Temporary weigth for adherence and censoring 1 : 
+simdatAC1_longer$wgt_adherence <- predict(numprobA1_adherence, simdatAC1_longer,type="response") / predict(denomprobA1_adherence,simdatAC1_longer,type="response")
+#simdatAC1_longer$wgt_adherence[simdatAC1_longer$A == 0] <- 0
+
+simdatAC1_longer$wgt_censor <- (1-predict(numprobA1_censor, simdatAC1_longer,type="response")) / (1-predict(denomprobA1_censor,simdatAC1_longer,type="response"))
+#simdatAC1_longer$wgt_censor[simdatAC1_longer$censor == 1] <- 0
+
+#Temporary weight for adherence and censoring 2: 
+#simdatAC1_longer$wgt_adherence[simdatAC1_longer$A ==1] <- predict(numprobA1_adherence, simdatAC1_longer[simdatAC1_longer$A ==1,],type="response") / predict(denomprobA1_adherence,simdatAC1_longer[simdatAC1_longer$A==1,],type="response")
+#simdatAC1_longer$wgt_adherence[simdatAC1_longer$A == 0] <- 0
+
+#simdatAC1_longer$wgt_censor[simdatAC1_longer$A == 1] <- (1-predict(numprobA1_censor, simdatAC1_longer[simdatAC1_longer$censor == 0,],type="response")) / (1-predict(denomprobA1_censor,simdatAC1_longer[simdatAC1_longer$censor ==0,],type="response"))
+#simdatAC1_longer$wgt_censor[simdatAC1_longer$censor == 1] <- 0
+
+#IPW weigths: 
+ipw_adherence1 <- numeric()
+ipw_censor1 <- numeric()
+
+identity <- unique(simdatAC1_longer$Maskid)
+for ( i in 1:length(identity)){
+  data_subset <- subset(simdatAC1_longer, simdatAC1_longer$Maskid == identity[i] )
+  ipw_adherence1 <- c(ipw_adherence1,cumprod(data_subset$wgt_adherence))
+  ipw_censor1 <- c(ipw_censor1,cumprod(data_subset$wgt_censor))
+}
+
+ipw_1 <- ipw_adherence1 * ipw_censor1
+```
+
+## For intensive arm ( Z=0), we compute the adherence and censor plot. We can then take the product of the IPW censor and IPW adherence to compute the final IPW. 
+```{r}
+#Adherence:
+
+numprobA0_adherence <- glm(A ~ simdatAC0_longer$days, data = simdatAC0_longer,family = binomial(link = "logit"))
+denomprobA0_adherence <- glm(A~ simdatAC0_longer$days + simdatAC0_longer$SAElag, data=simdatAC0_longer,family= binomial(link="logit"))
+
+#Censoring: 
+numprobA0_censor <- glm(simdatAC0_longer$censor ~ simdatAC0_longer$days, data = simdatAC0_longer, family =  binomial(link="logit"))
+denomprobA0_censor <- glm( simdatAC0_longer$censor ~ simdatAC0_longer$days + simdatAC0_longer$SAElag, data = simdatAC0_longer, family=binomial(link="logit"))
+
+#Temporary weigth for adherence and censoring 1: 
+simdatAC0_longer$wgt_adherence <- predict(numprobA0_adherence, simdatAC0_longer,type="response") / predict(denomprobA0_adherence,simdatAC0_longer,type="response")
+#simdatAC0_longer$wgt_adherence[simdatAC0_longer$A == 0] <- 0
+
+simdatAC0_longer$wgt_censor<- (1-predict(numprobA0_censor, simdatAC0_longer,type="response")) / (1-predict(denomprobA0_censor,simdatAC0_longer,type="response"))
+#simdatAC0_longer$wgt_censor[simdatAC0_longer$censor == 1] <- 0
+
+#Temporary weight for adherence and censoring 2: 
+#simdatAC0_longer$wgt_adherence[simdatAC0_longer$A ==1] <- predict(numprobA0_adherence, simdatAC0_longer[simdatAC0_longer$A ==1,],type="response") / predict(denomprobA0_adherence,simdatAC1_longer[simdatAC0_longer$A==1,],type="response")
+#simdatAC0_longer$wgt_adherence[simdatAC0_longer$A == 0] <- 0
+
+#simdatAC0_longer$wgt_censor[simdatAC0_longer$A == 1] <- (1-predict(numprobA0_censor, simdatAC0_longer[simdatAC0_longer$censor == 0,],type="response")) / (1-predict(denomprobA0_censor,simdatAC0_longer[simdatAC0_longer$censor ==0,],type="response"))
+#simdatAC0_longer$wgt_censor[simdatAC0_longer$censor == 1] <- 0
+
+#wgt_adh <- simdatAC1_longer$A/predict(denomprobA1_adherence,simdatAC1_longer,type="response")
+#wgt_cen <- simdatAC1_longer$censor/predict(denomprobA1_censor,simdatAC1_longer,type="response")
+
+#wgt2_adh <- simdatAC0_longer$A/predict(denomprobA0_adherence,simdatAC0_longer,type="response")
+#wgt2_cen <- simdatAC0_longer$censor/predict(denomprobA0_censor,simdatAC0_longer,type="response")
+
+#IPW weigths: 
+ipw_adherence0 <- numeric()
+ipw_censor0 <- numeric()
+
+identity0 <- unique(simdatAC0_longer$Maskid)
+for ( i in 1:length(identity)){
+  data_subset <- subset(simdatAC0_longer, simdatAC0_longer$Maskid == identity0[i] )
+  ipw_adherence0 <- c(ipw_adherence0,cumprod(data_subset$wgt_adherence))
+  ipw_censor0 <- c(ipw_censor0,cumprod(data_subset$wgt_censor))
+}
+
+ipw_0 <- ipw_adherence0 * ipw_censor0
+```
+
+## Weighted Survival: 
+```{r}
+simdatAC0_longer$ipw <- ipw_0
+simdatAC1_longer$ipw <- ipw_1
+
+#Weighted survival: 
+weight1 <- rep(NA,24)
+weightcom1 <- rep(NA,24)
+
+weight0 <- rep(NA,24)
+weightcom0 <- rep(NA,24)
+
+for ( h in 1:3){
+  time <- 30*h
+  weight1[h] <- sum(simdatAC1_longer$ipw[simdatAC1_longer$Y==1 & simdatAC1_longer$days == time])/sum(simdatAC1_longer$ipw[simdatAC1_longer$days == time])
+  weightcom1[h] <- 1-weight1[h]
+  
+  weight0[h] <- sum(simdatAC0_longer$ipw[simdatAC0_longer$Y==1 & simdatAC0_longer$days == time])/sum(simdatAC0_longer$ipw[simdatAC0_longer$days == time])
+  weightcom0[h] <- 1-weight0[h]
+}
+
+for ( h in 1:21){
+  time <- 90*(h+1)
+  weight1[h+3] <- sum(simdatAC1_longer$ipw[simdatAC1_longer$Y==1 & simdatAC1_longer$days == time])/sum(simdatAC1_longer$ipw[simdatAC1_longer$days == time])
+  weightcom1[h+3] <- 1-weight1[h+3]
+  
+  weight0[h+3] <- sum(simdatAC0_longer$ipw[simdatAC0_longer$Y==1 & simdatAC0_longer$days == time])/sum(simdatAC0_longer$ipw[simdatAC0_longer$days == time])
+  weightcom0[h+3] <- 1-weight0[h+3]
+}
+
+wtppSt1 <- cumprod(weightcom1[-c(23,24)])
+wtppSt0 <- cumprod(weightcom0[-c(23,24)])
+
+wtppS1 <- c(wtppSt1)
+wtppS0 <- c(wtppSt0)
+
+time <- c(30,60,90,180,270,360,450,540,630,720,810,900,990,1080,1170,1260,1350,1440,1530,1620,1710,1800)
+wtppdata <- data.frame(time,wtppS1,wtppS0)
+```
+
+## Plot of the survival time with stabilized weights: 
+```{r}
+ggplot(wtppdata,aes(time)) + geom_line(aes(y=wtppS1,colour= "Intensive treatment")) + geom_line(aes(y=wtppS0,colour="Standard treatment"))+ labs(y="Survival Time", x="Time (days)") + ylim(c(0.9,1))
+```
+
+## Non weighted Survival time 
+```{r}
+unadjustcumprod1 <- rep(NA,24)
+unadjustsurv1 <- rep(NA,24)
+
+unadjustcumprod0 <- rep(NA,24)
+unadjustsurv0 <- rep(NA,24)
+
+for ( h in 1:3){
+  time <- 30*h
+  unadjustcumprod1[h] <- dim(simdatAC1_longer[simdatAC1_longer$Y==1 & simdatAC1_longer$days == time & simdatAC1_longer$A ==1 & simdatAC1_longer$censor ==0,][1])/dim(simdatAC1_longer[simdatAC1_longer$days == time & simdatAC1_longer$A == 1 & simdatAC1_longer$censor ==0,])[1]
+  unadjustsurv1[h] <- 1-unadjustcumprod1[h]
+  
+  unadjustcumprod0[h] <- dim(simdatAC0_longer[simdatAC0_longer$Y==1 & simdatAC0_longer$days == time & simdatAC0_longer$A ==1 & simdatAC0_longer$censor ==0,][1])/dim(simdatAC0_longer[simdatAC0_longer$days == time & simdatAC0_longer$A == 1 & simdatAC0_longer$censor ==0,])[1]
+  unadjustsurv0[h] <- 1-unadjustcumprod0[h]
+}
+
+for ( h in 1:21){
+  time <- 90*(h+1)
+  unadjustcumprod1[h+3] <- dim(simdatAC1_longer[simdatAC1_longer$Y==1 & simdatAC1_longer$days == time & simdatAC1_longer$A ==1 & simdatAC1_longer$censor ==0,][1])/dim(simdatAC1_longer[simdatAC1_longer$days == time & simdatAC1_longer$A == 1 & simdatAC1_longer$censor ==0,])[1]
+  unadjustsurv1[h+3] <- 1- unadjustcumprod1[h+3]
+  
+  unadjustcumprod0[h+3] <- dim(simdatAC0_longer[simdatAC0_longer$Y==1 & simdatAC0_longer$days == time & simdatAC0_longer$A ==1 & simdatAC0_longer$censor ==0,][1])/dim(simdatAC0_longer[simdatAC0_longer$days == time & simdatAC0_longer$A == 1 & simdatAC0_longer$censor ==0,])[1]
+  unadjustsurv0[h+3] <- 1- unadjustcumprod0[h+3]
+}
+
+unadjustSt1 <- cumprod(unadjustsurv1)
+unadjustSt0 <- cumprod(unadjustsurv0)
+
+unadjppS1 <- c(unadjustSt1[-c(23,24)])
+unadjppS0 <- c(unadjustSt0[-c(23,24)])
+
+time <- c(30,60,90,180,270,360,450,540,630,720,810,900,990,1080,1170,1260,1350,1440,1530,1620,1710,1800)
+unadjppdata <- data.frame(time, unadjppS0,unadjppS1)
+```
+
+## Plot
+
+```{r}
+ggplot(unadjppdata,aes(time)) + geom_line(aes(y=unadjppS1,colour= "Intensive treatment")) + geom_line(aes(y=unadjppS0,colour="Standard treatment")) + ylim(c(0.9,1)) + labs(y="Survival Time for without weights", x="Time (days)") + ggtitle("Survival unweighted")
+```
+## Survival time with unstabilized weights: 
+
+# Weights in arm Z = 1: 
+```{r}
+simdatAC1_longer$ugwt_adherence <- simdatAC1_longer$wgt_adherence
+simdatAC1_longer$ugwt_adherence <- simdatAC1_longer$A/predict(denomprobA1_adherence,simdatAC1_longer,type="response")
+simdatAC1_longer$ugwt_censor <- simdatAC1_longer$ugwt_censor
+simdatAC1_longer$ugwt_censor <- (1 - simdatAC1_longer$censor)/ ( 1 - predict(denomprobA1_censor,simdatAC1_longer,type="response"))
+
+uipw_adherence1 <- numeric()
+uipw_censor1 <- numeric()
+
+identity <- unique(simdatAC1_longer$Maskid)
+for ( i in 1:length(identity)){
+  data_subset <- subset(simdatAC1_longer, simdatAC1_longer$Maskid == identity[i] )
+  uipw_adherence1 <- c(uipw_adherence1,cumprod(data_subset$ugwt_adherence))
+  uipw_censor1 <- c(uipw_censor1,cumprod(data_subset$ugwt_censor))
+}
+
+uipw_1 <- uipw_adherence1 * uipw_censor1
+```
+
+#Weights in arm Z = 0 :
+```{r}
+simdatAC0_longer$ugwt_adherence <- simdatAC0_longer$wgt_adherence
+simdatAC0_longer$ugwt_adherence <- simdatAC0_longer$A/predict(denomprobA0_adherence,simdatAC0_longer,type="response")
+simdatAC0_longer$ugwt_censor <- simdatAC0_longer$wgt_censor
+simdatAC0_longer$ugwt_censor <- ( 1 - simdatAC0_longer$censor) / (1- predict(denomprobA0_censor,simdatAC0_longer,type="response"))
+
+#unstabilized IPW weigths: 
+uipw_adherence0 <- numeric()
+uipw_censor0 <- numeric()
+
+identity0 <- unique(simdatAC0_longer$Maskid)
+for ( i in 1:length(identity)){
+  data_subset <- subset(simdatAC0_longer, simdatAC0_longer$Maskid == identity0[i] )
+  uipw_adherence0 <- c(uipw_adherence0,cumprod(data_subset$ugwt_adherence))
+  uipw_censor0 <- c(uipw_censor0,cumprod(data_subset$ugwt_censor))
+}
+
+uipw_0 <- uipw_adherence0 * uipw_censor0
+
+```
+
+#" Plot with unstabilized weights: 
+```{r}
+simdatAC0_longer$uipw <- uipw_0
+simdatAC1_longer$uipw <- uipw_1
+
+#Weighted unstabilized survival: 
+uweight1 <- rep(NA,24)
+uweightcom1 <- rep(NA,24)
+
+uweight0 <- rep(NA,24)
+uweightcom0 <- rep(NA,24)
+
+for ( h in 1:3){
+  time <- 30*h
+  uweight1[h] <- sum(simdatAC1_longer$uipw[simdatAC1_longer$Y==1 & simdatAC1_longer$days == time])/sum(simdatAC1_longer$uipw[simdatAC1_longer$days == time])
+  uweightcom1[h] <- 1- uweight1[h]
+  
+  uweight0[h] <- sum(simdatAC0_longer$uipw[simdatAC0_longer$Y==1 & simdatAC0_longer$days == time])/sum(simdatAC0_longer$uipw[simdatAC0_longer$days == time])
+  uweightcom0[h] <- 1- uweight0[h]
+}
+
+for ( h in 1:21){
+  time <- 90*(h+1)
+  uweight1[h+3] <- sum(simdatAC1_longer$uipw[simdatAC1_longer$Y==1 & simdatAC1_longer$days == time])/sum(simdatAC1_longer$uipw[simdatAC1_longer$days == time])
+  uweightcom1[h+3] <- 1- uweight1[h+3]
+  
+  uweight0[h+3] <- sum(simdatAC0_longer$uipw[simdatAC0_longer$Y==1 & simdatAC0_longer$days == time])/sum(simdatAC0_longer$uipw[simdatAC0_longer$days == time])
+  uweightcom0[h+3] <- 1-uweight0[h+3]
+}
+
+uwtppSt1 <- cumprod(uweightcom1[-c(23,24)])
+uwtppSt0 <- cumprod(uweightcom0[-c(23,24)])
+
+uwtppS1 <- c(uwtppSt1)
+uwtppS0 <- c(uwtppSt0)
+
+time <- c(30,60,90,180,270,360,450,540,630,720,810,900,990,1080,1170,1260,1350,1440,1530,1620,1710,1800)
+uwtppdata <- data.frame(time,uwtppS1,uwtppS0)
+
+ggplot(uwtppdata,aes(time)) + geom_line(aes(y=uwtppS1,colour= "Intensive treatment")) + geom_line(aes(y=uwtppS0,colour="Standard treatment"))+ labs(y="Survival Time", x="Time (days)") + ylim(c(0.9,1)) + ggtitle("Unstabilized weight ")
+```
